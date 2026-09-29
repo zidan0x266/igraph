@@ -314,6 +314,7 @@ add_legacy_tests(
   igraph_eccentricity
   igraph_eccentricity_dijkstra
   igraph_edge_betweenness
+  igraph_edge_betweenness_spatial
   igraph_edge_betweenness_subset
   igraph_feedback_arc_set
   igraph_feedback_vertex_set

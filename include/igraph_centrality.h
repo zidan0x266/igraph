@@ -72,6 +72,11 @@ IGRAPH_EXPORT igraph_error_t igraph_edge_betweenness(
         igraph_vector_t *res, igraph_es_t eids,
         igraph_bool_t directed, igraph_bool_t normalized);
 
+IGRAPH_EXPORT igraph_error_t igraph_edge_betweenness_spatial(
+        const igraph_t *graph, const igraph_matrix_t *coords,
+        const igraph_vector_t *box, igraph_int_t direction,
+        igraph_vector_t *gebc, igraph_vector_t *obc, igraph_vector_t *dbc);
+
 IGRAPH_EXPORT igraph_error_t igraph_edge_betweenness_cutoff(
         const igraph_t *graph, const igraph_vector_t *weights,
         igraph_vector_t *res, igraph_es_t eids,

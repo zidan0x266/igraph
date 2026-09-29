@@ -29,6 +29,8 @@
 #include "core/indheap.h"
 #include "core/interruption.h"
 
+#include <math.h>
+
 /*
  * We provide separate implementations of single-source shortest path searches,
  * one with incidence lists and one with adjacency lists. We use the implementation
@@ -956,6 +958,151 @@ igraph_error_t igraph_edge_betweenness_cutoff(
     IGRAPH_FREE(nrgeo);
     IGRAPH_FINALLY_CLEAN(6);
 
+    return IGRAPH_SUCCESS;
+}
+
+/**
+ * \ingroup structural
+ * \function igraph_edge_betweenness_spatial
+ * \brief Raw edge betweenness with source-target spatial weights.
+ *
+ * Computes GEBC, OBC and DBC together using one unweighted shortest-path
+ * search per source. Shortest paths do not depend on coordinates. OBC weights
+ * each source-target pair by fabs(displacement[direction]) / distance; DBC
+ * weights it by distance / box[direction]. Displacements use the orthorhombic
+ * minimum image convention. Coincident pairs have zero spatial weight.
+ * All three outputs count unordered pairs, as does unnormalized undirected
+ * igraph_edge_betweenness(). Loops contribute zero; parallel edges are supported.
+ *
+ * \param graph An undirected graph.
+ * \param coords Finite vertex coordinates, with vcount rows and three columns.
+ * \param box Three finite, strictly positive orthorhombic box lengths.
+ * \param direction Loading axis: 0 for x, 1 for y, 2 for z.
+ * \param gebc Initialized output vector for raw ordinary edge betweenness.
+ * \param obc Initialized output vector for raw orientation-weighted betweenness.
+ * \param dbc Initialized output vector for raw distance-weighted betweenness.
+ *        Outputs must be distinct and must not alias box. They are resized to
+ *        ecount and returned in edge-ID order.
+ * \return Error code.
+ *
+ * Time complexity: O(|V| (|V| + |E|)). Auxiliary space: O(|V| + |E|).
+ */
+igraph_error_t igraph_edge_betweenness_spatial(
+        const igraph_t *graph, const igraph_matrix_t *coords,
+        const igraph_vector_t *box, igraph_int_t direction,
+        igraph_vector_t *gebc, igraph_vector_t *obc, igraph_vector_t *dbc) {
+    const igraph_int_t n = igraph_vcount(graph), m = igraph_ecount(graph);
+    igraph_inclist_t inclist, parents;
+    igraph_stack_int_t stack;
+    igraph_vector_t dist, nrgeo, delta_gebc, delta_obc, delta_dbc;
+
+    if (igraph_is_directed(graph)) {
+        IGRAPH_ERROR("Spatial edge betweenness requires an undirected graph.", IGRAPH_EINVAL);
+    }
+    if (direction < 0 || direction > 2) {
+        IGRAPH_ERROR("Loading direction must be 0, 1 or 2.", IGRAPH_EINVAL);
+    }
+    if (igraph_matrix_nrow(coords) != n || igraph_matrix_ncol(coords) != 3) {
+        IGRAPH_ERROR("Coordinates must have vcount rows and three columns.", IGRAPH_EINVAL);
+    }
+    if (igraph_vector_size(box) != 3) {
+        IGRAPH_ERROR("Box must contain three lengths.", IGRAPH_EINVAL);
+    }
+    if (gebc == obc || gebc == dbc || obc == dbc || gebc == box || obc == box || dbc == box) {
+        IGRAPH_ERROR("Spatial betweenness outputs must not alias each other or box.", IGRAPH_EINVAL);
+    }
+    for (igraph_int_t axis = 0; axis < 3; axis++) {
+        if (!isfinite(VECTOR(*box)[axis]) || VECTOR(*box)[axis] <= 0) {
+            IGRAPH_ERROR("Box lengths must be finite and positive.", IGRAPH_EINVAL);
+        }
+        for (igraph_int_t v = 0; v < n; v++) {
+            if (!isfinite(MATRIX(*coords, v, axis))) {
+                IGRAPH_ERROR("Coordinates must be finite.", IGRAPH_EINVAL);
+            }
+        }
+    }
+
+    IGRAPH_CHECK(igraph_vector_resize(gebc, m));
+    IGRAPH_CHECK(igraph_vector_resize(obc, m));
+    IGRAPH_CHECK(igraph_vector_resize(dbc, m));
+    igraph_vector_null(gebc);
+    igraph_vector_null(obc);
+    igraph_vector_null(dbc);
+
+    IGRAPH_CHECK(igraph_inclist_init(graph, &inclist, IGRAPH_ALL, IGRAPH_NO_LOOPS));
+    IGRAPH_FINALLY(igraph_inclist_destroy, &inclist);
+    IGRAPH_CHECK(igraph_inclist_init_empty(&parents, n));
+    IGRAPH_FINALLY(igraph_inclist_destroy, &parents);
+    IGRAPH_CHECK(igraph_stack_int_init(&stack, n));
+    IGRAPH_FINALLY(igraph_stack_int_destroy, &stack);
+    IGRAPH_VECTOR_INIT_FINALLY(&dist, n);
+    IGRAPH_VECTOR_INIT_FINALLY(&nrgeo, n);
+    IGRAPH_VECTOR_INIT_FINALLY(&delta_gebc, n);
+    IGRAPH_VECTOR_INIT_FINALLY(&delta_obc, n);
+    IGRAPH_VECTOR_INIT_FINALLY(&delta_dbc, n);
+
+    for (igraph_int_t source = 0; source < n; source++) {
+        IGRAPH_PROGRESS("Spatial edge betweenness: ", 100.0 * source / n, 0);
+        IGRAPH_ALLOW_INTERRUPTION();
+
+        /* The same BFS, path counts, predecessor edge IDs and order as stock GEBC. */
+        IGRAPH_CHECK(sspf_edge(graph, source, &dist, VECTOR(nrgeo), &stack, &parents, &inclist, -1));
+
+        while (!igraph_stack_int_empty(&stack)) {
+            const igraph_int_t w = igraph_stack_int_pop(&stack);
+            igraph_vector_int_t *parentv = igraph_inclist_get(&parents, w);
+            const igraph_int_t parentv_len = igraph_vector_int_size(parentv);
+            igraph_real_t dr[3];
+            for (igraph_int_t axis = 0; axis < 3; axis++) {
+                const igraph_real_t length = VECTOR(*box)[axis];
+                dr[axis] = MATRIX(*coords, w, axis) - MATRIX(*coords, source, axis);
+                dr[axis] -= length * nearbyint(dr[axis] / length);
+            }
+            const igraph_real_t r = sqrt(dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]);
+            const igraph_real_t w_obc = r > 0 ? fabs(dr[direction]) / r : 0;
+            const igraph_real_t w_dbc = r / VECTOR(*box)[direction];
+            const igraph_real_t coeff_gebc = (1 + VECTOR(delta_gebc)[w]) / VECTOR(nrgeo)[w];
+            const igraph_real_t coeff_obc = (w_obc + VECTOR(delta_obc)[w]) / VECTOR(nrgeo)[w];
+            const igraph_real_t coeff_dbc = (w_dbc + VECTOR(delta_dbc)[w]) / VECTOR(nrgeo)[w];
+
+            for (igraph_int_t j = 0; j < parentv_len; j++) {
+                const igraph_int_t edge = VECTOR(*parentv)[j];
+                const igraph_int_t v = IGRAPH_OTHER(graph, edge, w);
+                const igraph_real_t c_gebc = VECTOR(nrgeo)[v] * coeff_gebc;
+                const igraph_real_t c_obc = VECTOR(nrgeo)[v] * coeff_obc;
+                const igraph_real_t c_dbc = VECTOR(nrgeo)[v] * coeff_dbc;
+                VECTOR(delta_gebc)[v] += c_gebc;
+                VECTOR(*gebc)[edge] += c_gebc;
+                VECTOR(delta_obc)[v] += c_obc;
+                VECTOR(*obc)[edge] += c_obc;
+                VECTOR(delta_dbc)[v] += c_dbc;
+                VECTOR(*dbc)[edge] += c_dbc;
+            }
+
+            VECTOR(dist)[w] = 0;
+            VECTOR(nrgeo)[w] = 0;
+            VECTOR(delta_gebc)[w] = 0;
+            VECTOR(delta_obc)[w] = 0;
+            VECTOR(delta_dbc)[w] = 0;
+            igraph_vector_int_clear(parentv);
+        }
+    }
+
+    /* Exactly one ordered-to-unordered pair correction for each channel. */
+    igraph_vector_scale(gebc, 0.5);
+    igraph_vector_scale(obc, 0.5);
+    igraph_vector_scale(dbc, 0.5);
+    IGRAPH_PROGRESS("Spatial edge betweenness: ", 100.0, 0);
+
+    igraph_vector_destroy(&delta_dbc);
+    igraph_vector_destroy(&delta_obc);
+    igraph_vector_destroy(&delta_gebc);
+    igraph_vector_destroy(&nrgeo);
+    igraph_vector_destroy(&dist);
+    igraph_stack_int_destroy(&stack);
+    igraph_inclist_destroy(&parents);
+    igraph_inclist_destroy(&inclist);
+    IGRAPH_FINALLY_CLEAN(8);
     return IGRAPH_SUCCESS;
 }
 
