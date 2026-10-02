@@ -969,7 +969,8 @@ igraph_error_t igraph_edge_betweenness_cutoff(
  * Computes GEBC, OBC and DBC together using one unweighted shortest-path
  * search per source. Shortest paths do not depend on coordinates. OBC weights
  * each source-target pair by fabs(displacement[direction]) / distance; DBC
- * weights it by distance / box[direction]. Displacements use the orthorhombic
+ * weights it by distance alone, with no reference-length denominator.
+ * Displacements use the orthorhombic
  * minimum image convention. Coincident pairs have zero spatial weight.
  * All three outputs count unordered pairs, as does unnormalized undirected
  * igraph_edge_betweenness(). Loops contribute zero; parallel edges are supported.
@@ -977,7 +978,7 @@ igraph_error_t igraph_edge_betweenness_cutoff(
  * \param graph An undirected graph.
  * \param coords Finite vertex coordinates, with vcount rows and three columns.
  * \param box Three finite, strictly positive orthorhombic box lengths.
- * \param direction Loading axis: 0 for x, 1 for y, 2 for z.
+ * \param direction OBC loading axis: 0 for x, 1 for y, 2 for z.
  * \param gebc Initialized output vector for raw ordinary edge betweenness.
  * \param obc Initialized output vector for raw orientation-weighted betweenness.
  * \param dbc Initialized output vector for raw distance-weighted betweenness.
@@ -1060,7 +1061,7 @@ igraph_error_t igraph_edge_betweenness_spatial(
             }
             const igraph_real_t r = sqrt(dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]);
             const igraph_real_t w_obc = r > 0 ? fabs(dr[direction]) / r : 0;
-            const igraph_real_t w_dbc = r / VECTOR(*box)[direction];
+            const igraph_real_t w_dbc = r;
             const igraph_real_t coeff_gebc = (1 + VECTOR(delta_gebc)[w]) / VECTOR(nrgeo)[w];
             const igraph_real_t coeff_obc = (w_obc + VECTOR(delta_obc)[w]) / VECTOR(nrgeo)[w];
             const igraph_real_t coeff_dbc = (w_dbc + VECTOR(delta_dbc)[w]) / VECTOR(nrgeo)[w];

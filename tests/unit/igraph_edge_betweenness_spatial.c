@@ -29,11 +29,11 @@ int main(void) {
     IGRAPH_ASSERT(igraph_vector_all_e(&gebc, &stock));
     IGRAPH_ASSERT(igraph_vector_all_e(&gebc, &obc));
     IGRAPH_ASSERT(VECTOR(gebc)[0] == 2 && VECTOR(gebc)[1] == 2);
-    IGRAPH_ASSERT(fabs(VECTOR(dbc)[0] - 0.6) < 1e-14);
-    IGRAPH_ASSERT(fabs(VECTOR(dbc)[1] - 0.6) < 1e-14);
+    IGRAPH_ASSERT(fabs(VECTOR(dbc)[0] - 6.0) < 1e-14);
+    IGRAPH_ASSERT(fabs(VECTOR(dbc)[1] - 6.0) < 1e-14);
     IGRAPH_ASSERT(igraph_edge_betweenness_spatial(&graph, &coords, &box, 1, &gebc, &obc, &dbc) == IGRAPH_SUCCESS);
     IGRAPH_ASSERT(igraph_vector_sum(&obc) == 0);
-    IGRAPH_ASSERT(fabs(VECTOR(dbc)[0] - 0.75) < 1e-14);
+    IGRAPH_ASSERT(fabs(VECTOR(dbc)[0] - 6.0) < 1e-14);
 
     igraph_set_error_handler(igraph_error_handler_ignore);
     igraph_set_progress_handler(cancel_after_source);
